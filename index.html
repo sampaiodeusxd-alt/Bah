@@ -3,12 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Sala 3D - PC & Celular</title>
+    <title>Sala 3D - Controles FPS Precisos</title>
     <style>
-        body { margin: 0; overflow: hidden; font-family: sans-serif; user-select: none; }
-        #canvas-container { width: 100vw; height: 100vh; }
+        body { margin: 0; overflow: hidden; font-family: sans-serif; user-select: none; touch-action: none; }
+        #canvas-container { width: 100vw; height: 100vh; position: absolute; top:0; left:0; z-index: 1;}
         
-        /* Instruções na tela */
         #instrucoes {
             position: absolute;
             top: 10px;
@@ -19,36 +18,37 @@
             border-radius: 5px;
             pointer-events: none;
             font-size: 14px;
+            z-index: 5;
         }
 
-        /* Zona onde o Joystick vai aparecer (canto inferior esquerdo) */
-        #joystick-zone {
+        /* Área dedicada ao joystick */
+        #joystick-container {
             position: absolute;
             bottom: 30px;
             left: 30px;
-            width: 120px;
-            height: 120px;
+            width: 140px;
+            height: 140px;
             z-index: 10;
         }
 
-        /* Botão de Interação (canto inferior direito) */
         #btn-interagir {
             position: absolute;
-            bottom: 50px;
+            bottom: 60px;
             right: 40px;
-            width: 70px;
-            height: 70px;
-            background: rgba(255, 87, 51, 0.8);
+            width: 75px;
+            height: 75px;
+            background: rgba(255, 87, 51, 0.85);
             color: white;
             border: 2px solid white;
             border-radius: 50%;
             font-weight: bold;
             font-size: 14px;
-            display: none; /* Só aparece no celular */
+            display: none;
             justify-content: center;
             align-items: center;
             z-index: 10;
             box-shadow: 0 0 10px rgba(0,0,0,0.5);
+            touch-action: none;
         }
         #btn-interagir:active { background: rgba(255, 87, 51, 1); transform: scale(0.95); }
     </style>
@@ -59,169 +59,212 @@
 
     <div id="instrucoes">
         <h4 style="margin:0 0 5px 0;">Controles:</h4>
-        <div id="texto-controles">Detectando dispositivo...</div>
+        <div id="texto-controles">Detectando...</div>
     </div>
 
-    <div id="joystick-zone"></div>
+    <div id="joystick-container"></div>
     <div id="btn-interagir">USAR</div>
     <div id="canvas-container"></div>
 
     <script>
-        // 1. CONFIGURAÇÃO BÁSICA
+        // --- 1. CONFIGURAÇÃO THREE.JS ---
         const scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x1a1a1a);
+        scene.background = new THREE.Color(0x111116);
 
         const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
         camera.position.set(0, 1.6, 5); 
+        camera.rotation.order = 'YXZ'; // Garante que a câmera gire no eixo Y e depois X corretamente
 
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
         document.getElementById('canvas-container').appendChild(renderer.domElement);
 
-        // Luzes
         scene.add(new THREE.AmbientLight(0xffffff, 0.6));
         const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-        dirLight.position.set(5, 10, 75);
+        dirLight.position.set(5, 10, 7.5);
         scene.add(dirLight);
 
-        // 2. CENÁRIO (Sala)
+        // --- CENÁRIO DA SALA ---
         const floorGeo = new THREE.PlaneGeometry(20, 20);
-        const floorMat = new THREE.MeshStandardMaterial({ color: 0x444444, roughness: 0.8 });
+        const floorMat = new THREE.MeshStandardMaterial({ color: 0x222225, roughness: 0.8 });
         const floor = new THREE.Mesh(floorGeo, floorMat);
         floor.rotation.x = -Math.PI / 2;
         scene.add(floor);
 
-        const wallMat = new THREE.MeshStandardMaterial({ color: 0x2c3e50 });
+        const wallMat = new THREE.MeshStandardMaterial({ color: 0x1f2d3d });
         const wallGeo = new THREE.PlaneGeometry(20, 10);
 
         const backWall = new THREE.Mesh(wallGeo, wallMat); backWall.position.set(0, 5, -10); scene.add(backWall);
         const leftWall = new THREE.Mesh(wallGeo, wallMat); leftWall.position.set(-10, 5, 0); leftWall.rotation.y = Math.PI/2; scene.add(leftWall);
         const rightWall = new THREE.Mesh(wallGeo, wallMat); rightWall.position.set(10, 5, 0); rightWall.rotation.y = -Math.PI/2; scene.add(rightWall);
 
-        // Objeto Interativo (Cubo Vermelho)
         const boxGeo = new THREE.BoxGeometry(1.5, 1.5, 1.5);
         const boxMat = new THREE.MeshStandardMaterial({ color: 0xff5733 });
         const box = new THREE.Mesh(boxGeo, boxMat);
         box.position.set(0, 0.75, 0);
         scene.add(box);
 
-        // Dica visual acima do cubo
-        const localInteracao = new THREE.Vector3(0, 0.75, 0);
-
-        // 3. DETECÇÃO DE DISPOSITIVO E CONTROLES
+        // --- 2. CONTROLES E CONFIGURAÇÃO DE INPUTS ---
         const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
         
-        // Variáveis de movimento
-        let moveData = { x: 0, y: 0 }; // Dados do joystick ou teclado
+        let moveData = { x: 0, y: 0 };
         let moveSpeed = 0.08;
         const keys = {};
 
-        // Configuração dependendo do dispositivo
+        // Rotação da Câmera (Mouse / Touch)
+        let pitch = 0; // Olhar para Cima/Baixo
+        let yaw = 0;   // Olhar para os Lados
+
         if (isMobile) {
-            document.getElementById('texto-controles').innerHTML = "Esquerda: Andar<br>Direita: Arrastar p/ olhar<br>Botão: Interagir";
+            document.getElementById('texto-controles').innerHTML = "Lado Esquerdo: Andar<br>Lado Direito: Olhar (360°)<br>Botão: Interagir";
             document.getElementById('btn-interagir').style.display = 'flex';
 
-            // Criar o Joystick Virtual
+            // JOYSTICK INTELIGENTE (Controle Independente)
             const manager = nipplejs.create({
-                zone: document.getElementById('joystick-zone'),
+                zone: document.getElementById('joystick-container'),
                 mode: 'static',
-                position: { left: '60px', bottom: '60px' },
-                color: 'white'
+                position: { left: '70px', bottom: '70px' },
+                color: 'white',
+                size: 110
             });
 
             manager.on('move', (evt, data) => {
-                // Converte a inclinação do joystick em direções X e Y (-1 a 1)
                 if (data.direction) {
-                    moveData.x = Math.cos(data.angle.radian) * (data.distance / 50);
-                    moveData.y = Math.sin(data.angle.radian) * (data.distance / 50);
+                    // Mantém a velocidade proporcional à tração do joystick
+                    moveData.x = Math.cos(data.angle.radian) * (data.distance / 55);
+                    moveData.y = Math.sin(data.angle.radian) * (data.distance / 55);
                 }
             });
 
             manager.on('end', () => {
-                moveData = { x: 0, y: 0 }; // Para de andar ao soltar
+                moveData = { x: 0, y: 0 };
             });
 
-            // Olhar ao redor no celular (Touch horizontal)
-            let touchStartX = 0;
+            // MULTI-TOUCH INTELIGENTE PARA A CÂMERA (Impede conflitos e o efeito de saltos)
+            let cameraTouchId = null; // Rastreia o dedo que está controlando a câmera
+            let lastTouchX = 0;
+            let lastTouchY = 0;
+
             window.addEventListener('touchstart', (e) => {
-                // Ignora toques no joystick ou no botão de interagir
-                if(e.touches[0].clientX < window.innerWidth / 2 && e.touches[0].clientY > window.innerHeight / 2) return;
-                touchStartX = e.touches[0].clientX;
-            });
+                // Rastreia novos toques
+                for (let i = 0; i < e.changedTouches.length; i++) {
+                    const touch = e.changedTouches[i];
+                    
+                    // Se o toque for na metade direita da tela e não houver um dedo controlando a câmera ativo:
+                    if (touch.clientX > window.innerWidth * 0.35 && cameraTouchId === null) {
+                        // Ignora se tocou diretamente no botão de interagir
+                        const btn = document.getElementById('btn-interagir');
+                        const rect = btn.getBoundingClientRect();
+                        if (touch.clientX >= rect.left && touch.clientX <= rect.right &&
+                            touch.clientY >= rect.top && touch.clientY <= rect.bottom) {
+                            continue;
+                        }
+
+                        cameraTouchId = touch.identifier;
+                        lastTouchX = touch.clientX;
+                        lastTouchY = touch.clientY;
+                    }
+                }
+            }, { passive: false });
 
             window.addEventListener('touchmove', (e) => {
-                if(e.touches[0].clientX < window.innerWidth / 2 && e.touches[0].clientY > window.innerHeight / 2) return;
-                let touchX = e.touches[0].clientX;
-                let deltaX = touchX - touchStartX;
-                camera.rotation.y -= deltaX * 0.005; // Sensibilidade do toque
-                touchStartX = touchX;
+                for (let i = 0; i < e.touches.length; i++) {
+                    const touch = e.touches[i];
+                    
+                    // Se o toque atual corresponder ao dedo que iniciou o movimento da câmera:
+                    if (touch.identifier === cameraTouchId) {
+                        let deltaX = touch.clientX - lastTouchX;
+                        let deltaY = touch.clientY - lastTouchY;
+
+                        // Girar câmera horizontalmente e verticalmente
+                        yaw -= deltaX * 0.005;  // Sensibilidade Horizontal
+                        pitch -= deltaY * 0.005; // Sensibilidade Vertical
+
+                        // LIMITAÇÃO VERTICAL: Impede de dar cambalhota olhando pro teto/chão (90 graus)
+                        pitch = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, pitch));
+
+                        camera.rotation.y = yaw;
+                        camera.rotation.x = pitch;
+
+                        lastTouchX = touch.clientX;
+                        lastTouchY = touch.clientY;
+                    }
+                }
+            }, { passive: false });
+
+            window.addEventListener('touchend', (e) => {
+                for (let i = 0; i < e.changedTouches.length; i++) {
+                    const touch = e.changedTouches[i];
+                    if (touch.identifier === cameraTouchId) {
+                        cameraTouchId = null; // Libera a câmera ao soltar o dedo
+                    }
+                }
             });
 
-            // Clique no botão Interagir do celular
-            document.getElementById('btn-interagir').addEventListener('click', interagir);
+            document.getElementById('btn-interagir').addEventListener('pointerdown', interagir);
 
         } else {
-            // Se for PC
-            document.getElementById('texto-controles').innerHTML = "W, A, S, D: Andar<br>Q, E ou Mouse: Olhar<br>F ou Barra de Espaço: Interagir";
-            
-            window.addEventListener('keydown', (e) => { keys[e.key.toLowerCase()] = true; if(e.key.toLowerCase() === 'f' || e.key === ' ') interagir(); });
+            // --- CONTROLES DE PC ---
+            document.getElementById('texto-controles').innerHTML = "W, A, S, D: Andar<br>Arrastar Mouse: Olhar<br>F ou Espaço: Interagir";
+
+            window.addEventListener('keydown', (e) => { 
+                keys[e.key.toLowerCase()] = true; 
+                if(e.key.toLowerCase() === 'f' || e.key === ' ') interagir(); 
+            });
             window.addEventListener('keyup', (e) => { keys[e.key.toLowerCase()] = false; });
 
-            // Rotação simples com o mouse ao clicar e arrastar na tela
+            // Rotação da câmera pelo mouse ao arrastar
             let mouseApertado = false;
             window.addEventListener('mousedown', () => mouseApertado = true);
             window.addEventListener('mouseup', () => mouseApertado = false);
             window.addEventListener('mousemove', (e) => {
                 if (mouseApertado) {
-                    camera.rotation.y -= e.movementX * 0.003;
+                    yaw -= e.movementX * 0.003;
+                    pitch -= e.movementY * 0.003;
+
+                    pitch = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, pitch));
+
+                    camera.rotation.y = yaw;
+                    camera.rotation.x = pitch;
                 }
             });
         }
 
-        // 4. FUNÇÃO DE INTERAÇÃO
+        // --- 3. FUNÇÃO DE INTERAÇÃO ---
         function interagir() {
-            // Verifica a distância entre a câmera (jogador) e o cubo
             const distancia = camera.position.distanceTo(box.position);
-            
-            // Se estiver a menos de 3 metros, a interação funciona!
             if (distancia < 3.5) {
-                // Gera uma cor aleatória para o cubo
                 const novaCor = Math.random() * 0xffffff;
                 box.material.color.setHex(novaCor);
                 
-                // Pequeno efeito de pulo no cubo para dar feedback
                 box.position.y = 1.2;
                 setTimeout(() => box.position.y = 0.75, 150);
             }
         }
 
-        // 5. CÁLCULO DE MOVIMENTAÇÃO POR QUADRO
+        // --- 4. CÁLCULO DE MOVIMENTAÇÃO (FPS) ---
         function atualizarMovimento() {
             const direction = new THREE.Vector3();
             camera.getWorldDirection(direction);
-            direction.y = 0;
+            direction.y = 0; // Garante movimento puramente no chão horizontal
             direction.normalize();
 
             const right = new THREE.Vector3();
             right.crossVectors(camera.up, direction).normalize();
 
             if (isMobile) {
-                // Movimentação via Joystick
+                // Usa os dados seguros do Joystick
                 camera.position.addScaledVector(direction, moveData.y * moveSpeed);
                 camera.position.addScaledVector(right, -moveData.x * moveSpeed);
             } else {
-                // Movimentação via Teclado PC
+                // Teclado PC
                 if (keys['w'] || keys['arrowup']) camera.position.addScaledVector(direction, moveSpeed);
                 if (keys['s'] || keys['arrowdown']) camera.position.addScaledVector(direction, -moveSpeed);
                 if (keys['a'] || keys['arrowleft']) camera.position.addScaledVector(right, moveSpeed);
                 if (keys['d'] || keys['arrowright']) camera.position.addScaledVector(right, -moveSpeed);
-                
-                // Girar no teclado (opcional, além do mouse)
-                if (keys['q']) camera.rotation.y += 0.03;
-                if (keys['e']) camera.rotation.y -= 0.03;
             }
 
-            // Limites das paredes (Colisão)
+            // Colisões de limite de parede
             camera.position.x = Math.max(-9.5, Math.min(9.5, camera.position.x));
             camera.position.z = Math.max(-9.5, Math.min(9.5, camera.position.z));
         }
@@ -232,12 +275,10 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
         });
 
-        // 6. LOOP PRINCIPAL
+        // --- 5. LOOP PRINCIPAL ---
         function animate() {
             requestAnimationFrame(animate);
-            
-            box.rotation.y += 0.005; // Cubo girando devagar
-
+            box.rotation.y += 0.005;
             atualizarMovimento();
             renderer.render(scene, camera);
         }
